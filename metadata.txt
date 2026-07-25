@@ -1,0 +1,14 @@
+[general]
+name=Stack Bands S2
+qgisMinimumVersion=3.0
+description=Stack raster bands (e.g. Sentinel-2) into a single GeoTIFF while preserving each band's name
+version=1.0
+author=Dr EDEA O. Emile
+email=edeaemile72@gmail.com
+about=This plugin lets you select a folder of raster bands (e.g. Sentinel-2 R10m bands), choose the stacking order, and generate a GeoTIFF where each band's original name is preserved in the GDAL metadata. The resulting layer is automatically loaded into QGIS.
+tracker=https://github.com/edeaemile72-bit/stack_bands_s2/issues
+repository=https://github.com/edeaemile72-bit/stack_bands_s2
+category=Raster
+icon=icon.png
+experimental=False
+deprecated=False
