@@ -284,7 +284,8 @@ class StackBandsDialog(QDialog):
 
     def choisir_image_renommer(self):
         chemin, _ = QFileDialog.getOpenFileName(
-            self, "Choisir une image raster", "", "GeoTIFF (*.tif *.tiff);;Tous les fichiers (*)"
+            self, "Choisir une image raster", "",
+            "Rasters (*.tif *.tiff *.jp2);;GeoTIFF (*.tif *.tiff);;JPEG2000 (*.jp2);;Tous les fichiers (*)"
         )
         if chemin:
             self.champ_image_renommer.setText(chemin)
@@ -333,6 +334,21 @@ class StackBandsDialog(QDialog):
             QMessageBox.warning(self, "Erreur", "Aucune bande chargée.")
             return
 
+        nouveaux_noms = [
+            self.table_bandes.item(i, 2).text().strip()
+            for i in range(self.table_bandes.rowCount())
+        ]
+
+        extension = os.path.splitext(chemin)[1].lower()
+
+        if extension in (".tif", ".tiff"):
+            self._enregistrer_en_place(chemin, nouveaux_noms)
+        else:
+            # JP2 et autres formats ne supportant pas l'édition en place :
+            # on crée une copie GeoTIFF avec les noms de bandes appliqués.
+            self._enregistrer_via_copie(chemin, nouveaux_noms)
+
+    def _enregistrer_en_place(self, chemin, nouveaux_noms):
         try:
             ds = gdal.Open(chemin, gdal.GA_Update)
         except Exception as e:
@@ -345,27 +361,65 @@ class StackBandsDialog(QDialog):
             return
 
         noms_appliques = []
-        for i in range(self.table_bandes.rowCount()):
-            nouveau_nom = self.table_bandes.item(i, 2).text().strip()
-            if nouveau_nom:
-                ds.GetRasterBand(i + 1).SetDescription(nouveau_nom)
-                noms_appliques.append(nouveau_nom)
+        for i, nom in enumerate(nouveaux_noms, start=1):
+            if nom:
+                ds.GetRasterBand(i).SetDescription(nom)
+                noms_appliques.append(nom)
 
         ds.FlushCache()
         ds = None
 
+        self._journaliser_renommage(chemin, chemin, noms_appliques)
+        QMessageBox.information(
+            self, "Succès", f"Les noms de bandes ont été enregistrés dans :\n{chemin}"
+        )
+
+    def _enregistrer_via_copie(self, chemin, nouveaux_noms):
         dossier = os.path.dirname(chemin)
+        base = os.path.splitext(os.path.basename(chemin))[0]
+        fichier_sortie = os.path.join(dossier, f"{base}_renomme.tif")
+
+        try:
+            translate_options = gdal.TranslateOptions(
+                format="GTiff",
+                creationOptions=["COMPRESS=DEFLATE", "PREDICTOR=2", "TILED=YES"],
+            )
+            out_ds = gdal.Translate(fichier_sortie, chemin, options=translate_options)
+
+            noms_appliques = []
+            for i, nom in enumerate(nouveaux_noms, start=1):
+                if nom:
+                    out_ds.GetRasterBand(i).SetDescription(nom)
+                    noms_appliques.append(nom)
+
+            out_ds.FlushCache()
+            out_ds = None
+
+        except Exception as e:
+            QMessageBox.critical(self, "Erreur", f"Échec de la copie renommée :\n{str(e)}")
+            return
+
+        # Chargement automatique de la nouvelle couche dans QGIS
+        couche = QgsRasterLayer(fichier_sortie, f"{base}_renomme")
+        if couche.isValid():
+            QgsProject.instance().addMapLayer(couche)
+
+        self._journaliser_renommage(chemin, fichier_sortie, noms_appliques)
+        QMessageBox.information(
+            self, "Succès",
+            "Le format JP2 ne permet pas l'édition en place.\n"
+            f"Une copie GeoTIFF avec les noms appliqués a été créée :\n{fichier_sortie}"
+        )
+
+    def _journaliser_renommage(self, chemin_source, chemin_resultat, noms_appliques):
+        dossier = os.path.dirname(chemin_source)
         actions = "\n".join(
             [f"  - Bande {i+1} renommée en \"{nom}\"" for i, nom in enumerate(noms_appliques)]
         )
         self.ecrire_journal(
             dossier=dossier,
-            objectif=f"Renommage des bandes de l'image {os.path.basename(chemin)} "
+            objectif=f"Renommage des bandes de l'image {os.path.basename(chemin_source)} "
                      f"via le plugin Stack Bands S2",
             actions=actions,
-            resultat=f"Noms de bandes mis à jour dans {chemin} : {', '.join(noms_appliques)}",
-        )
-
-        QMessageBox.information(
-            self, "Succès", f"Les noms de bandes ont été enregistrés dans :\n{chemin}"
+            resultat=f"Noms de bandes appliqués dans {chemin_resultat} : {', '.join(noms_appliques)}",
         )
