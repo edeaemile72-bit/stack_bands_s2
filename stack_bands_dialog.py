@@ -4,8 +4,10 @@ from datetime import datetime
 from qgis.PyQt.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit,
     QPushButton, QFileDialog, QListWidget, QAbstractItemView,
-    QMessageBox, QProgressBar
+    QMessageBox, QProgressBar, QTabWidget, QWidget, QTableWidget,
+    QTableWidgetItem, QHeaderView
 )
+from qgis.PyQt.QtCore import Qt
 from qgis.core import QgsRasterLayer, QgsProject
 from osgeo import gdal
 
@@ -16,14 +18,23 @@ class StackBandsDialog(QDialog):
     def __init__(self, iface, parent=None):
         super().__init__(parent)
         self.iface = iface
-        self.setWindowTitle("Stack Bands S2 - Empilement de bandes")
-        self.resize(560, 420)
-        self._build_ui()
+        self.setWindowTitle("Stack Bands S2")
+        self.resize(600, 480)
 
-    def _build_ui(self):
+        layout_principal = QVBoxLayout()
+        onglets = QTabWidget()
+        onglets.addTab(self._build_onglet_stack(), "Empiler les bandes")
+        onglets.addTab(self._build_onglet_renommer(), "Renommer les bandes")
+        layout_principal.addWidget(onglets)
+        self.setLayout(layout_principal)
+
+    # ------------------------------------------------------------------
+    # ONGLET 1 - EMPILEMENT DES BANDES
+    # ------------------------------------------------------------------
+    def _build_onglet_stack(self):
+        widget = QWidget()
         layout = QVBoxLayout()
 
-        # --- Choix du dossier ---
         layout.addWidget(QLabel("Dossier contenant les bandes (ex. R10m) :"))
         dossier_layout = QHBoxLayout()
         self.champ_dossier = QLineEdit()
@@ -33,7 +44,6 @@ class StackBandsDialog(QDialog):
         dossier_layout.addWidget(bouton_parcourir)
         layout.addLayout(dossier_layout)
 
-        # --- Liste des fichiers détectés ---
         layout.addWidget(QLabel(
             "Bandes détectées (.jp2 / .tif) - sélectionnez et ordonnez "
             "dans l'ordre d'empilement souhaité :"
@@ -48,21 +58,25 @@ class StackBandsDialog(QDialog):
         bouton_monter.clicked.connect(self.monter_selection)
         bouton_descendre = QPushButton("Descendre ↓")
         bouton_descendre.clicked.connect(self.descendre_selection)
+        bouton_retirer = QPushButton("Retirer ✕")
+        bouton_retirer.setToolTip(
+            "Retire le(s) fichier(s) sélectionné(s) de la liste "
+            "(ne supprime rien du disque)"
+        )
+        bouton_retirer.clicked.connect(self.retirer_selection)
         ordre_layout.addWidget(bouton_monter)
         ordre_layout.addWidget(bouton_descendre)
+        ordre_layout.addWidget(bouton_retirer)
         layout.addLayout(ordre_layout)
 
-        # --- Nom du fichier de sortie ---
         layout.addWidget(QLabel("Nom du fichier de sortie (.tif) :"))
         self.champ_sortie = QLineEdit("stack_bandes.tif")
         layout.addWidget(self.champ_sortie)
 
-        # --- Barre de progression ---
         self.barre_progression = QProgressBar()
         self.barre_progression.setValue(0)
         layout.addWidget(self.barre_progression)
 
-        # --- Boutons d'action ---
         boutons_layout = QHBoxLayout()
         bouton_executer = QPushButton("Exécuter le stack")
         bouton_executer.clicked.connect(self.executer_stack)
@@ -72,7 +86,8 @@ class StackBandsDialog(QDialog):
         boutons_layout.addWidget(bouton_fermer)
         layout.addLayout(boutons_layout)
 
-        self.setLayout(layout)
+        widget.setLayout(layout)
+        return widget
 
     def choisir_dossier(self):
         dossier = QFileDialog.getExistingDirectory(self, "Choisir le dossier des bandes")
@@ -103,6 +118,23 @@ class StackBandsDialog(QDialog):
             item = self.liste_fichiers.takeItem(ligne)
             self.liste_fichiers.insertItem(ligne + 1, item)
             self.liste_fichiers.setCurrentRow(ligne + 1)
+
+    def retirer_selection(self):
+        """Retire de la liste le(s) fichier(s) non désiré(s) pour le stack.
+        N'affecte que la sélection dans la fenêtre, aucun fichier n'est
+        supprimé du dossier."""
+        lignes_selectionnees = sorted(
+            [self.liste_fichiers.row(item) for item in self.liste_fichiers.selectedItems()],
+            reverse=True,
+        )
+        if not lignes_selectionnees:
+            QMessageBox.information(
+                self, "Information",
+                "Sélectionnez d'abord un ou plusieurs fichiers dans la liste à retirer."
+            )
+            return
+        for ligne in lignes_selectionnees:
+            self.liste_fichiers.takeItem(ligne)
 
     @staticmethod
     def extraire_nom_bande(nom_fichier):
@@ -180,7 +212,6 @@ class StackBandsDialog(QDialog):
 
             self.barre_progression.setValue(90)
 
-            # Chargement automatique dans QGIS
             couche = QgsRasterLayer(fichier_sortie, os.path.splitext(nom_sortie)[0])
             if couche.isValid():
                 QgsProject.instance().addMapLayer(couche)
@@ -212,3 +243,129 @@ class StackBandsDialog(QDialog):
         except Exception as e:
             self.barre_progression.setValue(0)
             QMessageBox.critical(self, "Erreur", f"Échec du traitement :\n{str(e)}")
+
+    # ------------------------------------------------------------------
+    # ONGLET 2 - RENOMMAGE DES BANDES D'UNE IMAGE EXISTANTE
+    # ------------------------------------------------------------------
+    def _build_onglet_renommer(self):
+        widget = QWidget()
+        layout = QVBoxLayout()
+
+        layout.addWidget(QLabel("Image raster à traiter (.tif) :"))
+        fichier_layout = QHBoxLayout()
+        self.champ_image_renommer = QLineEdit()
+        bouton_parcourir_image = QPushButton("Parcourir...")
+        bouton_parcourir_image.clicked.connect(self.choisir_image_renommer)
+        fichier_layout.addWidget(self.champ_image_renommer)
+        fichier_layout.addWidget(bouton_parcourir_image)
+        layout.addLayout(fichier_layout)
+
+        layout.addWidget(QLabel(
+            "Double-cliquez sur la colonne \"Nouveau nom\" pour modifier le nom de chaque bande :"
+        ))
+        self.table_bandes = QTableWidget(0, 3)
+        self.table_bandes.setHorizontalHeaderLabels(["Bande", "Nom actuel", "Nouveau nom"])
+        self.table_bandes.horizontalHeader().setSectionResizeMode(0, QHeaderView.ResizeToContents)
+        self.table_bandes.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
+        self.table_bandes.horizontalHeader().setSectionResizeMode(2, QHeaderView.Stretch)
+        layout.addWidget(self.table_bandes)
+
+        boutons_layout = QHBoxLayout()
+        bouton_enregistrer = QPushButton("Enregistrer les noms")
+        bouton_enregistrer.clicked.connect(self.enregistrer_noms_bandes)
+        bouton_fermer2 = QPushButton("Fermer")
+        bouton_fermer2.clicked.connect(self.close)
+        boutons_layout.addWidget(bouton_enregistrer)
+        boutons_layout.addWidget(bouton_fermer2)
+        layout.addLayout(boutons_layout)
+
+        widget.setLayout(layout)
+        return widget
+
+    def choisir_image_renommer(self):
+        chemin, _ = QFileDialog.getOpenFileName(
+            self, "Choisir une image raster", "", "GeoTIFF (*.tif *.tiff);;Tous les fichiers (*)"
+        )
+        if chemin:
+            self.champ_image_renommer.setText(chemin)
+            self.charger_bandes_pour_renommage(chemin)
+
+    def charger_bandes_pour_renommage(self, chemin):
+        self.table_bandes.setRowCount(0)
+        try:
+            ds = gdal.Open(chemin)
+        except Exception as e:
+            QMessageBox.critical(self, "Erreur", f"Impossible d'ouvrir le fichier :\n{str(e)}")
+            return
+
+        if ds is None:
+            QMessageBox.critical(self, "Erreur", "Fichier raster invalide.")
+            return
+
+        nb_bandes = ds.RasterCount
+        self.table_bandes.setRowCount(nb_bandes)
+        for i in range(1, nb_bandes + 1):
+            band = ds.GetRasterBand(i)
+            nom_actuel = band.GetDescription() or "(sans nom)"
+
+            item_bande = QTableWidgetItem(f"Bande {i}")
+            item_bande.setFlags(item_bande.flags() & ~Qt.ItemIsEditable)
+            self.table_bandes.setItem(i - 1, 0, item_bande)
+
+            item_actuel = QTableWidgetItem(nom_actuel)
+            item_actuel.setFlags(item_actuel.flags() & ~Qt.ItemIsEditable)
+            self.table_bandes.setItem(i - 1, 1, item_actuel)
+
+            item_nouveau = QTableWidgetItem(
+                nom_actuel if nom_actuel != "(sans nom)" else f"B{i}"
+            )
+            self.table_bandes.setItem(i - 1, 2, item_nouveau)
+
+        ds = None
+
+    def enregistrer_noms_bandes(self):
+        chemin = self.champ_image_renommer.text().strip()
+        if not chemin or not os.path.isfile(chemin):
+            QMessageBox.warning(self, "Erreur", "Veuillez choisir une image raster valide.")
+            return
+
+        if self.table_bandes.rowCount() == 0:
+            QMessageBox.warning(self, "Erreur", "Aucune bande chargée.")
+            return
+
+        try:
+            ds = gdal.Open(chemin, gdal.GA_Update)
+        except Exception as e:
+            QMessageBox.critical(
+                self, "Erreur",
+                f"Impossible d'ouvrir le fichier en écriture :\n{str(e)}\n\n"
+                "Vérifiez que le fichier n'est pas déjà ouvert dans QGIS "
+                "(retirez la couche du projet avant de renommer)."
+            )
+            return
+
+        noms_appliques = []
+        for i in range(self.table_bandes.rowCount()):
+            nouveau_nom = self.table_bandes.item(i, 2).text().strip()
+            if nouveau_nom:
+                ds.GetRasterBand(i + 1).SetDescription(nouveau_nom)
+                noms_appliques.append(nouveau_nom)
+
+        ds.FlushCache()
+        ds = None
+
+        dossier = os.path.dirname(chemin)
+        actions = "\n".join(
+            [f"  - Bande {i+1} renommée en \"{nom}\"" for i, nom in enumerate(noms_appliques)]
+        )
+        self.ecrire_journal(
+            dossier=dossier,
+            objectif=f"Renommage des bandes de l'image {os.path.basename(chemin)} "
+                     f"via le plugin Stack Bands S2",
+            actions=actions,
+            resultat=f"Noms de bandes mis à jour dans {chemin} : {', '.join(noms_appliques)}",
+        )
+
+        QMessageBox.information(
+            self, "Succès", f"Les noms de bandes ont été enregistrés dans :\n{chemin}"
+        )
