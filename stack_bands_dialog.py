@@ -26,7 +26,41 @@ class StackBandsDialog(QDialog):
         onglets.addTab(self._build_onglet_stack(), "Empiler les bandes")
         onglets.addTab(self._build_onglet_renommer(), "Renommer les bandes")
         layout_principal.addWidget(onglets)
+
+        bas_layout = QHBoxLayout()
+        bas_layout.addStretch()
+        bouton_aide = QPushButton("Aide ?")
+        bouton_aide.clicked.connect(self.afficher_aide)
+        bas_layout.addWidget(bouton_aide)
+        layout_principal.addLayout(bas_layout)
+
         self.setLayout(layout_principal)
+
+    def afficher_aide(self):
+        texte_aide = (
+            "<b>Onglet \"Empiler les bandes\"</b><br>"
+            "1. Choisissez le dossier contenant vos bandes (.jp2 ou .tif), ex. R10m.<br>"
+            "2. La liste des fichiers détectés s'affiche : utilisez Monter/Descendre pour "
+            "définir l'ordre d'empilement, et Retirer pour exclure un fichier non désiré.<br>"
+            "3. Choisissez le dossier de sortie (pré-rempli automatiquement).<br>"
+            "4. Donnez un nom au fichier de sortie (.tif).<br>"
+            "5. Cliquez sur \"Exécuter le stack\". Le nom de chaque bande "
+            "(B02, B03, B04, B08...) est automatiquement détecté depuis le nom de fichier "
+            "et conservé dans les métadonnées du GeoTIFF résultant.<br><br>"
+            "<b>Onglet \"Renommer les bandes\"</b><br>"
+            "1. Sélectionnez un ou plusieurs fichiers (.jp2/.tif), ou chargez un dossier entier.<br>"
+            "2. Chaque bande apparaît sur une ligne du tableau avec un nom proposé, "
+            "modifiable en double-cliquant sur \"Nouveau nom\".<br>"
+            "3. Choisissez le dossier de sortie pour les copies issues de fichiers .jp2 "
+            "(les .tif sont modifiés directement, sans copie).<br>"
+            "4. Cliquez sur \"Enregistrer les noms\". Pour un .jp2, une copie GeoTIFF "
+            "nommée d'après la bande (ex. B01.tif) est créée et chargée dans QGIS ; "
+            "pour un .tif, le fichier est modifié en place.<br><br>"
+            "<b>Remarque</b><br>"
+            "Un journal technique (journal_technique.txt) est automatiquement mis à jour "
+            "dans le dossier de sortie à chaque opération."
+        )
+        QMessageBox.information(self, "Aide - Stack Bands S2", texte_aide)
 
     # ------------------------------------------------------------------
     # ONGLET 1 - EMPILEMENT DES BANDES
